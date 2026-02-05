@@ -1,0 +1,19 @@
+# Environment files with secrets
+develop/.env.local
+production/.env.local
+
+# Certificate files
+develop/certs/*.p12
+develop/certs/*.pfx
+develop/certs/*.pem
+develop/certs/*.key
+develop/certs/*.crt
+production/certs/*.p12
+production/certs/*.pfx
+production/certs/*.pem
+production/certs/*.key
+production/certs/*.crt
+
+# Keep structure
+!develop/certs/.gitignore
+!production/certs/.gitignore

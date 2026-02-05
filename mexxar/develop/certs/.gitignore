@@ -1,0 +1,10 @@
+# Ignore all certificate files
+*.p12
+*.pfx
+*.pem
+*.key
+*.crt
+*.cer
+
+# Keep this .gitignore
+!.gitignore

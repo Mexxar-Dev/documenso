@@ -1,0 +1,97 @@
+name: documenso-mexxar-dev
+
+services:
+  database:
+    image: postgres:15
+    container_name: mexxar-dev-database
+    volumes:
+      - mexxar_dev_database:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U documenso']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    environment:
+      - POSTGRES_USER=documenso
+      - POSTGRES_PASSWORD=password
+      - POSTGRES_DB=documenso
+    ports:
+      - 54320:5432
+    networks:
+      - mexxar-dev
+
+  mailserver:
+    image: inbucket/inbucket
+    container_name: mexxar-dev-mailserver
+    ports:
+      - 9000:9000
+      - 2500:2500
+      - 1100:1100
+    networks:
+      - mexxar-dev
+
+  minio:
+    image: minio/minio
+    container_name: mexxar-dev-minio
+    ports:
+      - 9002:9002
+      - 9001:9001
+    volumes:
+      - mexxar_dev_minio:/data
+    environment:
+      MINIO_ROOT_USER: documenso
+      MINIO_ROOT_PASSWORD: password
+    entrypoint: sh
+    command: -c 'mkdir -p /data/documenso && minio server /data --console-address ":9001" --address ":9002"'
+    networks:
+      - mexxar-dev
+
+  app:
+    image: documenso/documenso:latest
+    container_name: mexxar-dev-app
+    depends_on:
+      database:
+        condition: service_healthy
+      mailserver:
+        condition: service_started
+      minio:
+        condition: service_started
+    ports:
+      - 3000:3000
+    environment:
+      - NEXTAUTH_SECRET=${NEXTAUTH_SECRET:-secret}
+      - NEXT_PRIVATE_ENCRYPTION_KEY=${NEXT_PRIVATE_ENCRYPTION_KEY:-CAFEBABE}
+      - NEXT_PRIVATE_ENCRYPTION_SECONDARY_KEY=${NEXT_PRIVATE_ENCRYPTION_SECONDARY_KEY:-DEADBEEF}
+      - NEXT_PUBLIC_WEBAPP_URL=${NEXT_PUBLIC_WEBAPP_URL:-http://localhost:3000}
+      - NEXT_PRIVATE_INTERNAL_WEBAPP_URL=http://app:3000
+      - NEXT_PRIVATE_DATABASE_URL=postgresql://documenso:password@database:5432/documenso
+      - NEXT_PRIVATE_DIRECT_DATABASE_URL=postgresql://documenso:password@database:5432/documenso
+      - NEXT_PUBLIC_UPLOAD_TRANSPORT=s3
+      - NEXT_PRIVATE_UPLOAD_ENDPOINT=http://minio:9002
+      - NEXT_PRIVATE_UPLOAD_FORCE_PATH_STYLE=true
+      - NEXT_PRIVATE_UPLOAD_REGION=us-east-1
+      - NEXT_PRIVATE_UPLOAD_BUCKET=documenso
+      - NEXT_PRIVATE_UPLOAD_ACCESS_KEY_ID=documenso
+      - NEXT_PRIVATE_UPLOAD_SECRET_ACCESS_KEY=password
+      - NEXT_PRIVATE_SMTP_TRANSPORT=smtp-auth
+      - NEXT_PRIVATE_SMTP_HOST=mailserver
+      - NEXT_PRIVATE_SMTP_PORT=2500
+      - NEXT_PRIVATE_SMTP_FROM_NAME=${NEXT_PRIVATE_SMTP_FROM_NAME:-Documenso}
+      - NEXT_PRIVATE_SMTP_FROM_ADDRESS=${NEXT_PRIVATE_SMTP_FROM_ADDRESS:-noreply@documenso.local}
+      - NEXT_PRIVATE_SIGNING_PASSPHRASE=${NEXT_PRIVATE_SIGNING_PASSPHRASE:-}
+      - NEXT_PRIVATE_SIGNING_LOCAL_FILE_PATH=/certs/cert.p12
+      - NEXT_PRIVATE_JOBS_PROVIDER=local
+      - DOCUMENSO_DISABLE_TELEMETRY=true
+      - NEXT_PUBLIC_DISABLE_SIGNUP=${NEXT_PUBLIC_DISABLE_SIGNUP:-}
+    volumes:
+      - ./certs:/certs:ro
+    networks:
+      - mexxar-dev
+
+volumes:
+  mexxar_dev_minio:
+  mexxar_dev_database:
+
+networks:
+  mexxar-dev:
+    driver: bridge
