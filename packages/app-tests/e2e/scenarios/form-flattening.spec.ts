@@ -1,8 +1,5 @@
-import { PDFDocument } from '@cantoo/pdf-lib';
-import { expect, test } from '@playwright/test';
 import fs from 'node:fs';
 import path from 'node:path';
-
 import { NEXT_PUBLIC_WEBAPP_URL } from '@documenso/lib/constants/app';
 import { createApiToken } from '@documenso/lib/server-only/public-api/create-api-token';
 import { getFileServerSide } from '@documenso/lib/universal/upload/get-file.server';
@@ -14,6 +11,8 @@ import type {
   TCreateEnvelopePayload,
   TCreateEnvelopeResponse,
 } from '@documenso/trpc/server/envelope-router/create-envelope.types';
+import { PDF } from '@libpdf/core';
+import { expect, test } from '@playwright/test';
 
 const WEBAPP_BASE_URL = NEXT_PUBLIC_WEBAPP_URL();
 const baseUrl = `${WEBAPP_BASE_URL}/api/v2-beta`;
@@ -39,44 +38,51 @@ const TEST_FORM_VALUES = {
  * Returns true if the PDF has form fields, false if they've been flattened.
  */
 async function pdfHasFormFields(pdfBuffer: Uint8Array): Promise<boolean> {
-  const pdfDoc = await PDFDocument.load(pdfBuffer);
+  const pdfDoc = await PDF.load(new Uint8Array(pdfBuffer));
 
-  const form = pdfDoc.getForm();
-  const fields = form.getFields();
+  const form = await pdfDoc.getForm();
 
-  return fields.length > 0;
+  if (!form) {
+    return false;
+  }
+
+  return form.fieldCount > 0;
 }
 
 /**
  * Helper to get form field names from a PDF.
  */
 async function getPdfFormFieldNames(pdfBuffer: Uint8Array): Promise<string[]> {
-  const pdfDoc = await PDFDocument.load(pdfBuffer);
+  const pdfDoc = await PDF.load(new Uint8Array(pdfBuffer));
 
-  const form = pdfDoc.getForm();
-  const fields = form.getFields();
+  const form = await pdfDoc.getForm();
 
-  return fields.map((field) => field.getName());
+  if (!form) {
+    return [];
+  }
+
+  return form.getFieldNames();
 }
 
 /**
  * Helper to get the value of a text field in a PDF.
  */
-async function getPdfTextFieldValue(
-  pdfBuffer: Uint8Array,
-  fieldName: string,
-): Promise<string | undefined> {
-  const pdfDoc = await PDFDocument.load(pdfBuffer);
+async function getPdfTextFieldValue(pdfBuffer: Uint8Array, fieldName: string): Promise<string | undefined> {
+  const pdfDoc = await PDF.load(new Uint8Array(pdfBuffer));
 
-  const form = pdfDoc.getForm();
+  const form = await pdfDoc.getForm();
 
-  try {
-    const textField = form.getTextField(fieldName);
-
-    return textField.getText() ?? '';
-  } catch {
+  if (!form) {
     return undefined;
   }
+
+  const textField = form.getTextField(fieldName);
+
+  if (!textField) {
+    return undefined;
+  }
+
+  return textField.getValue();
 }
 
 test.describe.configure({
@@ -84,14 +90,10 @@ test.describe.configure({
 });
 
 test.describe('Form Flattening', () => {
-  const formFieldsPdf = fs.readFileSync(
-    path.join(__dirname, '../../../../assets/form-fields-test.pdf'),
-  );
+  const formFieldsPdf = fs.readFileSync(path.join(__dirname, '../../../../assets/form-fields-test.pdf'));
 
   test.describe('Envelope Creation (DOCUMENT type)', () => {
-    test('should flatten form fields when creating a DOCUMENT envelope with formValues', async ({
-      request,
-    }) => {
+    test('should flatten form fields when creating a DOCUMENT envelope with formValues', async ({ request }) => {
       const { user, team } = await seedUser();
       const { token } = await createApiToken({
         userId: user.id,
@@ -109,10 +111,7 @@ test.describe('Form Flattening', () => {
       const formData = new FormData();
 
       formData.append('payload', JSON.stringify(payload));
-      formData.append(
-        'files',
-        new File([formFieldsPdf], 'form-fields-test.pdf', { type: 'application/pdf' }),
-      );
+      formData.append('files', new File([formFieldsPdf], 'form-fields-test.pdf', { type: 'application/pdf' }));
 
       const res = await request.post(`${baseUrl}/envelope/create`, {
         headers: { Authorization: `Bearer ${token}` },
@@ -146,9 +145,7 @@ test.describe('Form Flattening', () => {
       expect(hasFormFields).toBe(false);
     });
 
-    test('should flatten form fields when creating a DOCUMENT envelope without formValues', async ({
-      request,
-    }) => {
+    test('should flatten form fields when creating a DOCUMENT envelope without formValues', async ({ request }) => {
       const { user, team } = await seedUser();
       const { token } = await createApiToken({
         userId: user.id,
@@ -166,10 +163,7 @@ test.describe('Form Flattening', () => {
       const formData = new FormData();
 
       formData.append('payload', JSON.stringify(payload));
-      formData.append(
-        'files',
-        new File([formFieldsPdf], 'form-fields-test.pdf', { type: 'application/pdf' }),
-      );
+      formData.append('files', new File([formFieldsPdf], 'form-fields-test.pdf', { type: 'application/pdf' }));
 
       const res = await request.post(`${baseUrl}/envelope/create`, {
         headers: { Authorization: `Bearer ${token}` },
@@ -201,9 +195,7 @@ test.describe('Form Flattening', () => {
   });
 
   test.describe('Template Creation (TEMPLATE type)', () => {
-    test('should NOT flatten form fields when creating a TEMPLATE envelope', async ({
-      request,
-    }) => {
+    test('should NOT flatten form fields when creating a TEMPLATE envelope', async ({ request }) => {
       const { user, team } = await seedUser();
       const { token } = await createApiToken({
         userId: user.id,
@@ -221,10 +213,7 @@ test.describe('Form Flattening', () => {
       const formData = new FormData();
 
       formData.append('payload', JSON.stringify(payload));
-      formData.append(
-        'files',
-        new File([formFieldsPdf], 'form-fields-test.pdf', { type: 'application/pdf' }),
-      );
+      formData.append('files', new File([formFieldsPdf], 'form-fields-test.pdf', { type: 'application/pdf' }));
 
       const res = await request.post(`${baseUrl}/envelope/create`, {
         headers: { Authorization: `Bearer ${token}` },
@@ -264,9 +253,7 @@ test.describe('Form Flattening', () => {
       expect(fieldNames).toContain(FORM_FIELDS.DROPDOWN);
     });
 
-    test('should preserve form fields in template even when formValues are provided', async ({
-      request,
-    }) => {
+    test('should preserve form fields in template even when formValues are provided', async ({ request }) => {
       const { user, team } = await seedUser();
       const { token } = await createApiToken({
         userId: user.id,
@@ -284,10 +271,7 @@ test.describe('Form Flattening', () => {
       const formData = new FormData();
 
       formData.append('payload', JSON.stringify(payload));
-      formData.append(
-        'files',
-        new File([formFieldsPdf], 'form-fields-test.pdf', { type: 'application/pdf' }),
-      );
+      formData.append('files', new File([formFieldsPdf], 'form-fields-test.pdf', { type: 'application/pdf' }));
 
       const res = await request.post(`${baseUrl}/envelope/create`, {
         headers: { Authorization: `Bearer ${token}` },
@@ -326,9 +310,7 @@ test.describe('Form Flattening', () => {
   });
 
   test.describe('Document from Template', () => {
-    test('should flatten form fields when creating document from template with formValues', async ({
-      request,
-    }) => {
+    test('should flatten form fields when creating document from template with formValues', async ({ request }) => {
       const { user, team } = await seedUser();
       const { token } = await createApiToken({
         userId: user.id,
@@ -352,10 +334,7 @@ test.describe('Form Flattening', () => {
 
       const templateFormData = new FormData();
       templateFormData.append('payload', JSON.stringify(templatePayload));
-      templateFormData.append(
-        'files',
-        new File([formFieldsPdf], 'form-fields-test.pdf', { type: 'application/pdf' }),
-      );
+      templateFormData.append('files', new File([formFieldsPdf], 'form-fields-test.pdf', { type: 'application/pdf' }));
 
       const templateRes = await request.post(`${baseUrl}/envelope/create`, {
         headers: { Authorization: `Bearer ${token}` },
@@ -421,9 +400,7 @@ test.describe('Form Flattening', () => {
       expect(hasFormFields).toBe(false);
     });
 
-    test('should flatten form fields when creating document from template without formValues', async ({
-      request,
-    }) => {
+    test('should flatten form fields when creating document from template without formValues', async ({ request }) => {
       const { user, team } = await seedUser();
       const { token } = await createApiToken({
         userId: user.id,
@@ -447,10 +424,7 @@ test.describe('Form Flattening', () => {
 
       const templateFormData = new FormData();
       templateFormData.append('payload', JSON.stringify(templatePayload));
-      templateFormData.append(
-        'files',
-        new File([formFieldsPdf], 'form-fields-test.pdf', { type: 'application/pdf' }),
-      );
+      templateFormData.append('files', new File([formFieldsPdf], 'form-fields-test.pdf', { type: 'application/pdf' }));
 
       const templateRes = await request.post(`${baseUrl}/envelope/create`, {
         headers: { Authorization: `Bearer ${token}` },
@@ -506,9 +480,7 @@ test.describe('Form Flattening', () => {
       expect(hasFormFields).toBe(false);
     });
 
-    test('should use template formValues when creating document without override', async ({
-      request,
-    }) => {
+    test('should use template formValues when creating document without override', async ({ request }) => {
       const { user, team } = await seedUser();
       const { token } = await createApiToken({
         userId: user.id,
@@ -536,10 +508,7 @@ test.describe('Form Flattening', () => {
 
       const templateFormData = new FormData();
       templateFormData.append('payload', JSON.stringify(templatePayload));
-      templateFormData.append(
-        'files',
-        new File([formFieldsPdf], 'form-fields-test.pdf', { type: 'application/pdf' }),
-      );
+      templateFormData.append('files', new File([formFieldsPdf], 'form-fields-test.pdf', { type: 'application/pdf' }));
 
       const templateRes = await request.post(`${baseUrl}/envelope/create`, {
         headers: { Authorization: `Bearer ${token}` },
@@ -626,10 +595,7 @@ test.describe('Form Flattening', () => {
       const templateFormData = new FormData();
 
       templateFormData.append('payload', JSON.stringify(templatePayload));
-      templateFormData.append(
-        'files',
-        new File([formFieldsPdf], 'form-fields-test.pdf', { type: 'application/pdf' }),
-      );
+      templateFormData.append('files', new File([formFieldsPdf], 'form-fields-test.pdf', { type: 'application/pdf' }));
 
       const templateRes = await request.post(`${baseUrl}/envelope/create`, {
         headers: { Authorization: `Bearer ${token}` },
@@ -763,10 +729,7 @@ test.describe('Form Flattening', () => {
       const formData = new FormData();
 
       formData.append('payload', JSON.stringify(payload));
-      formData.append(
-        'files',
-        new File([formFieldsPdf], 'form-fields-test.pdf', { type: 'application/pdf' }),
-      );
+      formData.append('files', new File([formFieldsPdf], 'form-fields-test.pdf', { type: 'application/pdf' }));
 
       const res = await request.post(`${baseUrl}/envelope/create`, {
         headers: { Authorization: `Bearer ${token}` },
@@ -812,10 +775,7 @@ test.describe('Form Flattening', () => {
       const formData = new FormData();
 
       formData.append('payload', JSON.stringify(payload));
-      formData.append(
-        'files',
-        new File([formFieldsPdf], 'form-fields-test.pdf', { type: 'application/pdf' }),
-      );
+      formData.append('files', new File([formFieldsPdf], 'form-fields-test.pdf', { type: 'application/pdf' }));
 
       const res = await request.post(`${baseUrl}/envelope/create`, {
         headers: { Authorization: `Bearer ${token}` },
